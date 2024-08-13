@@ -236,9 +236,9 @@ func (s *SmartContract) CalculateWastageInRollingWindow(ctx contractapi.Transact
 		for _, item := range invoice.Items {
 			if item.ItemID == itemID && item.ExpiryDate == expiryDate {
 				if invoice.InvoiceType == "purchase" {
-					totalPurchases += item.TotalPrice
+					totalPurchases += item.Quantity
 				} else if invoice.InvoiceType == "sales" {
-					totalSales += item.TotalPrice
+					totalSales += item.Quantity
 				}
 			}
 		}
