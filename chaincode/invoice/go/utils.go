@@ -58,3 +58,39 @@ func CreateProvenanceRecord(existingData []byte, recordID string, ctx contractap
 	}
 	return ctx.GetStub().PutState(recordID, provenanceJSON)
 }
+
+// Get counts of valid and invalid transactions
+func GetTransactionCounts(ctx contractapi.TransactionContextInterface, itemID string) (int, int, error) {
+	queryString := fmt.Sprintf(`{"selector":{"item_id":"%s"}}`, itemID)
+	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resultsIterator.Close()
+
+	var invalidCount int
+	var totalCount int
+
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return 0, 0, err
+		}
+
+		var transaction struct {
+			IsValid bool `json:"is_valid"`
+		}
+
+		err = DeserializeFromJSON(queryResponse.Value, &transaction)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		if !transaction.IsValid {
+			invalidCount++
+		}
+		totalCount++
+	}
+
+	return invalidCount, totalCount, nil
+}
