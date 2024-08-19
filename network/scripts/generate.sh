@@ -1,18 +1,10 @@
 #!/bin/bash
 
-# Clean up the previous crypto material and config transactions
-rm -rf crypto-config
-rm -rf *.block
-rm -rf *.tx
+# Generate the crypto-config directory
+cryptogen generate --config=crypto-config.yaml
 
-# Generate Crypto Material
-cryptogen generate --config=./crypto-config.yaml
+# Generate the channel configuration transaction
+configtxgen -profile TwoOrgsOrdererGenesis -outputBlock channel-artifacts/genesis.block
 
-# Generate Genesis Block
-configtxgen -profile TwoOrgsOrdererGenesis -outputBlock ./genesis.block
-
-# Generate Channel Configuration Transaction
-configtxgen -profile TwoOrgsChannel -outputCreateChannelTx ./channel.tx -channelID mychannel
-
-# Generate Anchor Peer Transaction
-configtxgen -profile TwoOrgsChannel -outputAnchorPeersUpdate ./Org1MSPanchors.tx -channelID mychannel -asOrg Org1MSP
+# Generate the channel configuration transaction
+configtxgen -profile TwoOrgsChannel -outputCreateChannelTx channel-artifacts/channel.tx -channelID mychannel
