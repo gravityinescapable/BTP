@@ -1,0 +1,11 @@
+---
+CA:
+  Name: fabric-ca-orderer
+  Domain: example.com
+  Port: 7054
+  CA:
+    - Name: fabric-ca-orderer
+      Port: 7054
+      Registry:
+        - ID: admin
+          Secret: adminpw

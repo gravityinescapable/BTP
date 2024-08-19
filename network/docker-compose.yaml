@@ -1,0 +1,51 @@
+version: '2'
+
+services:
+
+  orderer.example.com:
+    image: hyperledger/fabric-orderer:2.4
+    container_name: orderer.example.com
+    environment:
+      - ORDERER_GENERAL_LOGLEVEL=info
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_GENESISMETHOD=file
+      - ORDERER_GENERAL_GENESISFILE=/var/hyperledger/orderer/orderer.genesis.block
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+      - ORDERER_GENERAL_TLS_ENABLED=false
+    volumes:
+      - ./crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp:/var/hyperledger/orderer/msp
+      - ./channel-artifacts/genesis.block:/var/hyperledger/orderer/orderer.genesis.block
+    ports:
+      - 7050:7050
+
+  peer0.org1.example.com:
+    image: hyperledger/fabric-peer:2.4
+    container_name: peer0.org1.example.com
+    environment:
+      - CORE_LOGGING_LEVEL=info
+      - CORE_PEER_ID=peer0.org1.example.com
+      - CORE_PEER_ADDRESS=peer0.org1.example.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.org1.example.com:7052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.org1.example.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.org1.example.com:7051
+      - CORE_PEER_LOCALMSPID=Org1MSP
+      - CORE_PEER_TLS_ENABLED=false
+    volumes:
+      - ./crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp:/var/hyperledger/peer/msp
+      - ./channel-artifacts/channel.tx:/var/hyperledger/configtx/channel.tx
+    ports:
+      - 7051:7051
+
+  cli:
+    image: hyperledger/fabric-tools:2.4
+    container_name: cli
+    environment:
+      - FABRIC_LOGGING_LEVEL=DEBUG
+    command: /bin/bash -c "sleep 10; /bin/bash"
+    volumes:
+      - ./scripts:/scripts
+    depends_on:
+      - orderer.example.com
+      - peer0.org1.example.com

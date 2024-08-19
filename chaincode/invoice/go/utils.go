@@ -8,89 +8,52 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-// Checks if the invoice type is valid
+// Converts a Go object to a JSON string
+func SerializeToJSON(data interface{}) ([]byte, error) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("Error serializing data to JSON: %v", err)
+	}
+	return jsonData, nil
+}
+
+// Converts a JSON string to a Go object
+func DeserializeFromJSON(jsonData []byte, v interface{}) error {
+	err := json.Unmarshal(jsonData, v)
+	if err != nil {
+		return fmt.Errorf("Error deserializing JSON data: %v", err)
+	}
+	return nil
+}
+
+// Creates a provenance record in the ledger
+func CreateProvenanceRecord(existingInvoiceJSON []byte, provenanceRecordID string, ctx contractapi.TransactionContextInterface) error {
+
+	// Store the provenance record in the ledger
+	return ctx.GetStub().PutState(provenanceRecordID, existingInvoiceJSON)
+}
+
+// Ensures the invoice type is either "purchase" or "sales"
 func ValidateInvoiceType(invoiceType string) error {
 	if invoiceType != "purchase" && invoiceType != "sales" {
-		return fmt.Errorf("Invoice type must be either 'purchase' or 'sales'")
+		return fmt.Errorf("Invalid invoice type %s, must be 'purchase' or 'sales'", invoiceType)
 	}
 	return nil
 }
 
-// Checks if the item is valid
+// Checks if the item is valid (i.e., is a food item)
 func ValidateItem(item Item) error {
 	if !item.IsFoodItem {
-		return fmt.Errorf("Only food items can be recorded in the invoice")
+		return fmt.Errorf("Item %s is not a food item", item.ItemID)
 	}
 	return nil
 }
 
-// Parses and validates date formats
+// Parses and validates a date string according to the given layout
 func ValidateDateFormat(dateStr string, layout string) (time.Time, error) {
-	date, err := time.Parse(layout, dateStr)
+	parsedDate, err := time.Parse(layout, dateStr)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("Invalid date format: %v", err)
 	}
-	return date, nil
-}
-
-// Converts a struct to JSON
-func SerializeToJSON(v interface{}) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-// Converts JSON to a struct
-func DeserializeFromJSON(data []byte, v interface{}) error {
-	return json.Unmarshal(data, v)
-}
-
-// Creates and stores a provenance record
-func CreateProvenanceRecord(existingData []byte, recordID string, ctx contractapi.TransactionContextInterface) error {
-	provenanceRecord := struct {
-		PreviousState string `json:"previous_state"`
-		Timestamp     string `json:"timestamp"`
-	}{
-		PreviousState: string(existingData),
-		Timestamp:     time.Now().String(),
-	}
-	provenanceJSON, err := SerializeToJSON(provenanceRecord)
-	if err != nil {
-		return err
-	}
-	return ctx.GetStub().PutState(recordID, provenanceJSON)
-}
-
-// Get counts of valid and invalid transactions
-func GetTransactionCounts(ctx contractapi.TransactionContextInterface, itemID string) (int, int, error) {
-	queryString := fmt.Sprintf(`{"selector":{"item_id":"%s"}}`, itemID)
-	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer resultsIterator.Close()
-
-	var invalidCount int
-	var totalCount int
-
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-		if err != nil {
-			return 0, 0, err
-		}
-
-		var transaction struct {
-			IsValid bool `json:"is_valid"`
-		}
-
-		err = DeserializeFromJSON(queryResponse.Value, &transaction)
-		if err != nil {
-			return 0, 0, err
-		}
-
-		if !transaction.IsValid {
-			invalidCount++
-		}
-		totalCount++
-	}
-
-	return invalidCount, totalCount, nil
+	return parsedDate, nil
 }

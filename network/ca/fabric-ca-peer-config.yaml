@@ -1,0 +1,8 @@
+---
+CA:
+  Name: fabric-ca-peer
+  Domain: example.com
+  Port: 7054
+  CA:
+    - Name: fabric-ca-peer
+      Port: 7054

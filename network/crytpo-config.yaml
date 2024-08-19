@@ -1,0 +1,31 @@
+---
+OrdererOrgs:
+  - Name: OrdererOrg
+    Domain: example.com
+    Specs:
+      - Hostname: orderer
+    Template:
+      Count: 1
+    OrganizationalUnitIdentifiers:
+      - CertificateAuthority
+
+PeerOrgs:
+  - Name: Org1
+    Domain: org1.example.com
+    Template:
+      Count: 1
+    Specs:
+      - Hostname: peer0
+    OrganizationalUnitIdentifiers:
+      - Peer
+      - CertificateAuthority
+
+  - Name: Org2
+    Domain: org2.example.com
+    Template:
+      Count: 1
+    Specs:
+      - Hostname: peer0
+    OrganizationalUnitIdentifiers:
+      - Peer
+      - CertificateAuthority
