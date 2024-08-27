@@ -1,4 +1,3 @@
----
 Organizations:
 
     - &OrdererOrg
@@ -14,6 +13,11 @@ Organizations:
             - Host: peer0.org1.example.com
               Port: 7051
 
+    - &ClientOrg
+        Name: ClientOrgMSP
+        ID: ClientOrgMSP
+        MSPDir: crypto-config/peerOrganizations/client.example.com/msp
+
 Capabilities:
     Channel: &ChannelCapabilities
         V2_0: true
@@ -26,6 +30,9 @@ Capabilities:
 
 Application: &ApplicationDefaults
     Organizations:
+        # Define default policies for application channels
+        - *Org1
+        - *ClientOrg
 
 Orderer: &OrdererDefaults
     OrdererType: solo
@@ -37,6 +44,7 @@ Orderer: &OrdererDefaults
         AbsoluteMaxBytes: 99 MB
         PreferredMaxBytes: 512 KB
     Organizations:
+        - *OrdererOrg
 
 Policies:
     Readers:
@@ -70,7 +78,29 @@ Profiles:
         Application:
             <<: *ApplicationDefaults
             Organizations:
-                - *Org1  # Include only the peer organizations here
+                - *Org1  # Include only the peer organizations 
+            Capabilities:
+                <<: *ApplicationCapabilities
+            Policies:
+                Readers:
+                    Type: ImplicitMeta
+                    Rule: "ANY Readers"
+                Writers:
+                    Type: ImplicitMeta
+                    Rule: "MAJORITY Writers"  # Ensures that only majority of the peers can write
+                Admins:
+                    Type: ImplicitMeta
+                    Rule: "MAJORITY Admins"
+                Endorsement:
+                    Type: ImplicitMeta
+                    Rule: "MAJORITY Endorsement"  # Only allow endorsing peers to approve transactions
+
+    ClientChannel:
+        Consortium: SampleConsortium
+        Application:
+            <<: *ApplicationDefaults
+            Organizations:
+                - *ClientOrg  # Include client organizations here
             Capabilities:
                 <<: *ApplicationCapabilities
             Policies:
