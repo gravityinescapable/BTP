@@ -70,7 +70,7 @@ Profiles:
         Application:
             <<: *ApplicationDefaults
             Organizations:
-                - *Org1  # Include only peer organizations here
+                - *Org1  # Include only the peer organizations here
             Capabilities:
                 <<: *ApplicationCapabilities
             Policies:
@@ -79,7 +79,7 @@ Profiles:
                     Rule: "ANY Readers"
                 Writers:
                     Type: ImplicitMeta
-                    Rule: "MAJORITY Writers"  # Ensures only majority of authorized organizations (peers) can write
+                    Rule: "MAJORITY Writers"  # Ensures that only majority of the peers can write
                 Admins:
                     Type: ImplicitMeta
                     Rule: "MAJORITY Admins"
