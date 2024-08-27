@@ -38,6 +38,44 @@ services:
     ports:
       - 7051:7051
 
+  peer0.org2.example.com:
+    image: hyperledger/fabric-peer:2.4
+    container_name: peer0.org2.example.com
+    environment:
+      - CORE_LOGGING_LEVEL=info
+      - CORE_PEER_ID=peer0.org2.example.com
+      - CORE_PEER_ADDRESS=peer0.org2.example.com:8051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:8051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.org2.example.com:8052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.org2.example.com:8051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.org2.example.com:8051
+      - CORE_PEER_LOCALMSPID=Org2MSP
+      - CORE_PEER_TLS_ENABLED=false
+    volumes:
+      - ./crypto-config/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp:/var/hyperledger/peer/msp
+      - ./channel-artifacts/channel.tx:/var/hyperledger/configtx/channel.tx
+    ports:
+      - 8051:8051
+
+  client0.client.example.com:
+    image: hyperledger/fabric-peer:2.4
+    container_name: client0.client.example.com
+    environment:
+      - CORE_LOGGING_LEVEL=info
+      - CORE_PEER_ID=client0.client.example.com
+      - CORE_PEER_ADDRESS=client0.client.example.com:9051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:9051
+      - CORE_PEER_CHAINCODEADDRESS=client0.client.example.com:9052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=client0.client.example.com:9051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=client0.client.example.com:9051
+      - CORE_PEER_LOCALMSPID=ClientMSP
+      - CORE_PEER_TLS_ENABLED=false
+    volumes:
+      - ./crypto-config/peerOrganizations/client.example.com/peers/client0.client.example.com/msp:/var/hyperledger/peer/msp
+      - ./channel-artifacts/channel.tx:/var/hyperledger/configtx/channel.tx
+    ports:
+      - 9051:9051
+
   cli:
     image: hyperledger/fabric-tools:2.4
     container_name: cli
@@ -49,3 +87,5 @@ services:
     depends_on:
       - orderer.example.com
       - peer0.org1.example.com
+      - peer0.org2.example.com
+      - client0.client.example.com
