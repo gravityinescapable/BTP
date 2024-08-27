@@ -1,4 +1,3 @@
----
 OrdererOrgs:
   - Name: OrdererOrg
     Domain: example.com
@@ -26,6 +25,16 @@ PeerOrgs:
       Count: 1
     Specs:
       - Hostname: peer0
+    OrganizationalUnitIdentifiers:
+      - Peer
+      - CertificateAuthority
+
+  - Name: ClientOrg
+    Domain: client.example.com
+    Template:
+      Count: 1
+    Specs:
+      - Hostname: client0
     OrganizationalUnitIdentifiers:
       - Peer
       - CertificateAuthority
