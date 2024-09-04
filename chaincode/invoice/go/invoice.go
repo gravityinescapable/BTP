@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -23,7 +24,7 @@ type Invoice struct {
 type Item struct {
 	ItemID       string  `json:"item_id"`
 	ItemName     string  `json:"item_name"`
-	Quantity     int     `json:"quantity"`
+	Quantity     float64 `json:"quantity"`
 	PricePerUnit float64 `json:"price_per_unit"`
 	TotalPrice   float64 `json:"total_price"`
 	ExpiryDate   string  `json:"expiry_date"`
@@ -31,9 +32,63 @@ type Item struct {
 	InvoiceType  string  `json:"invoice_type"` // 'purchase' or 'sales'
 }
 
+// Structure for storing quality index data
+type QualityIndex struct {
+	StoreID      string  `json:"store_id"`
+	WastageIndex float64 `json:"wastage_index"`
+	EthicsIndex  float64 `json:"ethics_index"`
+	QualityIndex float64 `json:"quality_index"`
+}
+
 // SmartContract to manage invoices
 type SmartContract struct {
 	contractapi.Contract
+}
+
+// Serialize an object to JSON
+func SerializeToJSON(obj interface{}) ([]byte, error) {
+	return json.Marshal(obj)
+}
+
+// Deserialize JSON to an object
+func DeserializeFromJSON(jsonData []byte, obj interface{}) error {
+	return json.Unmarshal(jsonData, obj)
+}
+
+// Validate the invoice type
+func ValidateInvoiceType(invoiceType string) error {
+	if invoiceType != "purchase" && invoiceType != "sales" {
+		return fmt.Errorf("invalid invoice type: %s", invoiceType)
+	}
+	return nil
+}
+
+// Validate the item fields
+func ValidateItem(item Item) error {
+	if !item.IsFoodItem {
+		return fmt.Errorf("item %s is not a food item", item.ItemID)
+	}
+	if item.Quantity <= 0 {
+		return fmt.Errorf("invalid quantity for item %s", item.ItemID)
+	}
+	if item.PricePerUnit <= 0 {
+		return fmt.Errorf("invalid price per unit for item %s", item.ItemID)
+	}
+	return nil
+}
+
+// Validate date format
+func ValidateDateFormat(dateStr string, format string) (time.Time, error) {
+	date, err := time.Parse(format, dateStr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return date, nil
+}
+
+// Create a provenance record for an invoice
+func CreateProvenanceRecord(invoiceJSON []byte, provenanceRecordID string, ctx contractapi.TransactionContextInterface) error {
+	return ctx.GetStub().PutState(provenanceRecordID, invoiceJSON)
 }
 
 // Creates a new invoice and stores it in the ledger
@@ -53,18 +108,18 @@ func (s *SmartContract) CreateInvoice(ctx contractapi.TransactionContextInterfac
 		// Parse the expiry date of the item
 		expiryDate, err := ValidateDateFormat(item.ExpiryDate, "2006-01-02")
 		if err != nil {
-			return fmt.Errorf("Invalid expiry date format for item %s: %v", item.ItemID, err)
+			return fmt.Errorf("invalid expiry date format for item %s: %v", item.ItemID, err)
 		}
 
 		// Parse the transaction date
 		transactionDate, err := ValidateDateFormat(date, "2006-01-02")
 		if err != nil {
-			return fmt.Errorf("Invalid transaction date format: %v", err)
+			return fmt.Errorf("invalid transaction date format: %v", err)
 		}
 
 		// Check if the item is expired at the time of the transaction
 		if transactionDate.After(expiryDate) {
-			return fmt.Errorf("Transaction cannot be recorded because item %s has expired", item.ItemID)
+			return fmt.Errorf("transaction cannot be recorded because item %s has expired", item.ItemID)
 		}
 
 		// Add invoice type to the item
@@ -98,7 +153,7 @@ func (s *SmartContract) UpdateInvoice(ctx contractapi.TransactionContextInterfac
 	// Retrieve the existing invoice
 	existingInvoiceJSON, err := ctx.GetStub().GetState(invoiceID)
 	if err != nil {
-		return fmt.Errorf("Failed to read from world state: %v", err)
+		return fmt.Errorf("failed to read from world state: %v", err)
 	}
 	if existingInvoiceJSON == nil {
 		return fmt.Errorf("Invoice %s does not exist", invoiceID)
@@ -126,7 +181,7 @@ func (s *SmartContract) DeleteInvoice(ctx contractapi.TransactionContextInterfac
 	// Retrieve the existing invoice
 	existingInvoiceJSON, err := ctx.GetStub().GetState(invoiceID)
 	if err != nil {
-		return fmt.Errorf("Failed to read from world state: %v", err)
+		return fmt.Errorf("failed to read from world state: %v", err)
 	}
 	if existingInvoiceJSON == nil {
 		return fmt.Errorf("Invoice %s does not exist", invoiceID)
@@ -145,26 +200,11 @@ func (s *SmartContract) DeleteInvoice(ctx contractapi.TransactionContextInterfac
 // Calculate wastage for an item within a rolling window
 func (s *SmartContract) CalculateWastageInRollingWindow(ctx contractapi.TransactionContextInterface, itemID string, expiryDate string) (float64, error) {
 
-	// Composite key
-	itemKey := struct {
-		ItemID     string `json:"item_id"`
-		ExpiryDate string `json:"expiry_date"`
-	}{
-		ItemID:     itemID,
-		ExpiryDate: expiryDate,
-	}
-
-	// Parse the expiry date
-	expiryDateParsed, err := ValidateDateFormat(expiryDate, "2006-01-02")
-	if err != nil {
-		return 0, fmt.Errorf("Invalid expiry date format: %v", err)
-	}
-
-	// Fetch all invoices associated with an itemKey
-	queryString := fmt.Sprintf(`{"selector":{"items.item_id":"%s","items.expiry_date":"%s"}}`, itemID, expiryDate)
+	// Fetch all invoices associated with an itemID
+	queryString := fmt.Sprintf(`{"selector":{"items.item_id":"%s"}}`, itemID)
 	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
 	if err != nil {
-		return 0, fmt.Errorf("Failed to query ledger: %v", err)
+		return 0, fmt.Errorf("failed to query ledger: %v", err)
 	}
 	defer resultsIterator.Close()
 
@@ -187,36 +227,29 @@ func (s *SmartContract) CalculateWastageInRollingWindow(ctx contractapi.Transact
 		// Parse the invoice date
 		invoiceDateParsed, err := ValidateDateFormat(invoice.Date, "2006-01-02")
 		if err != nil {
-			return 0, fmt.Errorf("Invalid invoice date format: %v", err)
+			return 0, fmt.Errorf("invalid invoice date format: %v", err)
 		}
 
-		for _, item := range invoice.Items {
-			if item.ItemID == itemID && item.ExpiryDate == expiryDate && invoice.InvoiceType == "purchase" {
-
-				// Check and set the first purchase date
-				if !isFirstPurchaseFound || invoiceDateParsed.Before(firstPurchaseDate) {
-					firstPurchaseDate = invoiceDateParsed
-					isFirstPurchaseFound = true
-					break
-				}
-			}
+		// Check and set the first purchase date
+		if !isFirstPurchaseFound || invoiceDateParsed.Before(firstPurchaseDate) {
+			firstPurchaseDate = invoiceDateParsed
+			isFirstPurchaseFound = true
 		}
 	}
 
 	if !isFirstPurchaseFound {
-		return 0, fmt.Errorf("No purchase data found for item %s", itemID)
+		return 0, fmt.Errorf("no purchase data found for item %s", itemID)
 	}
 
-	// Calculate wastage based on the first purchase date and current date
+	// Calculate wastage based on the first purchase date and expiry date
 	totalSales := 0.0
 	totalPurchases := 0.0
-	currentDate := time.Now()
-	windowStartDate := firstPurchaseDate
 
 	// Query for all sales and purchases in the window
+	queryString = fmt.Sprintf(`{"selector":{"items.item_id":"%s","date":{"$gte":"%s","$lte":"%s"}}}`, itemID, firstPurchaseDate.Format("2006-01-02"), expiryDate)
 	resultsIterator, err = ctx.GetStub().GetQueryResult(queryString)
 	if err != nil {
-		return 0, fmt.Errorf("Failed to query ledger: %v", err)
+		return 0, fmt.Errorf("failed to query ledger: %v", err)
 	}
 	defer resultsIterator.Close()
 
@@ -232,222 +265,123 @@ func (s *SmartContract) CalculateWastageInRollingWindow(ctx contractapi.Transact
 			return 0, err
 		}
 
-		// Parse the invoice date
-		invoiceDateParsed, err := ValidateDateFormat(invoice.Date, "2006-01-02")
-		if err != nil {
-			return 0, fmt.Errorf("Invalid invoice date format: %v", err)
-		}
-
 		// Check if the transaction date exceeds the expiry date
-		transactionTime, err := time.Parse(time.RFC3339, invoice.Date)
+		transactionTime, err := time.Parse("2006-01-02", invoice.Date)
 		if err != nil {
-			return fmt.Errorf("Error parsing transaction date: %v", err)
+			return 0, fmt.Errorf("error parsing transaction date: %v", err)
 		}
 
-		expiryTime, err := time.Parse(time.RFC3339, expiryDate)
+		expiryTime, err := time.Parse("2006-01-02", expiryDate)
 		if err != nil {
-			return fmt.Errorf("Error parsing expiry date: %v", err)
+			return 0, fmt.Errorf("error parsing expiry date: %v", err)
 		}
 
 		// Invalidate the transaction if the transaction date exceeds the expiry date
 		if transactionTime.After(expiryTime) {
-			err = ctx.GetStub().DelState(invoice.InvoiceID)
-			if err != nil {
-				return fmt.Errorf("Failed to delete invoice %s: %v", invoice.InvoiceID, err)
-			}
-			continue
+			return 0, fmt.Errorf("transaction cannot be recorded because item %s has expired", itemID)
 		}
 
 		for _, item := range invoice.Items {
 			if item.ItemID == itemID && item.ExpiryDate == expiryDate {
 				if invoice.InvoiceType == "sales" {
-					totalSales += float64(item.Quantity)
+					totalSales += item.Quantity
 				} else if invoice.InvoiceType == "purchase" {
-					totalPurchases += float64(item.Quantity)
+					totalPurchases += item.Quantity
 				}
 			}
 		}
 	}
 
-	// Ensure total sales do not exceed total purchases
-	if totalSales > totalPurchases {
-		err := s.InvalidateTransactions(ctx, itemID, expiryDate)
-		if err != nil {
-			return 0, err
-		}
-		return 0, fmt.Errorf("Total sales exceed total purchases for item %s with expiry date %s. All related transactions have been invalidated.", itemID, expiryDate)
+	// Calculate the wastage index
+	if totalPurchases == 0 {
+		return 0, nil
 	}
+	wastageIndex := (totalSales / totalPurchases) * 100
 
-	wastage := totalPurchases - totalSales
-
-	// Return the calculated wastage
-	return wastage, nil
+	return wastageIndex, nil
 }
 
-// Calculate the quality index of a store
-func (s *SmartContract) CalculateQualityIndex(ctx contractapi.TransactionContextInterface, storeID string) (float64, error) {
+// Calculate the quality index for a store
+func (s *SmartContract) CalculateQualityIndex(ctx contractapi.TransactionContextInterface, storeID string) (QualityIndex, error) {
 
-	// Fetch all invoices associated with the storeID
+	// Fetch all invoices associated with a storeID
 	queryString := fmt.Sprintf(`{"selector":{"store_id":"%s"}}`, storeID)
 	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
 	if err != nil {
-		return 0, fmt.Errorf("Failed to query ledger: %v", err)
+		return QualityIndex{}, fmt.Errorf("failed to query ledger: %v", err)
 	}
 	defer resultsIterator.Close()
 
-	var totalQualityIndex float64
-	var itemKeyCount int
+	totalWastageIndex := 0.0
+	totalItems := 0
+	totalValid := 0
+	totalInvalid := 0
 
-	// Iterate through the results and calculate the quality index for each item
 	for resultsIterator.HasNext() {
 		queryResponse, err := resultsIterator.Next()
 		if err != nil {
-			return 0, err
+			return QualityIndex{}, err
 		}
 
 		var invoice Invoice
 		err = DeserializeFromJSON(queryResponse.Value, &invoice)
 		if err != nil {
-			return 0, err
+			return QualityIndex{}, err
 		}
 
+		// Calculate wastage index for each item
 		for _, item := range invoice.Items {
-			// Calculate wastage
-			wastage, err := s.CalculateWastageInRollingWindow(ctx, item.ItemID, item.ExpiryDate)
-			if err != nil {
-				return 0, err
-			}
-
-			// Calculate wastage index and ethics index
-			wastageIndex := BoundIndex((wastage / float64(item.Quantity)) * 100)
-			ethicsIndex, err := s.CalculateEthicsIndex(ctx, item.ItemID, item.ExpiryDate)
-			if err != nil {
-				return 0, err
-			}
-
-			// Calculate the quality index for the item
-			qualityIndex := BoundIndex((1 / wastageIndex) + ethicsIndex)
-			totalQualityIndex += qualityIndex
-			itemKeyCount++
-		}
-	}
-
-	// Return the average quality index for the store
-	if itemKeyCount == 0 {
-		return 0, fmt.Errorf("No items found for store %s", storeID)
-	}
-
-	return totalQualityIndex / float64(itemKeyCount), nil
-}
-
-// Ensure that index values are between 0 and 100
-func BoundIndex(index float64) float64 {
-	if index < 0 {
-		return 0
-	}
-	if index > 100 {
-		return 100
-	}
-	return index
-}
-
-// Invalidate all transactions related to a specific itemID and expiry date
-func (s *SmartContract) InvalidateTransactions(ctx contractapi.TransactionContextInterface, itemID string, expiryDate string) error {
-
-	// Fetch all invoices related to the itemID and expiryDate
-	queryString := fmt.Sprintf(`{"selector":{"items.item_id":"%s","items.expiry_date":"%s"}}`, itemID, expiryDate)
-	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
-	if err != nil {
-		return fmt.Errorf("Failed to query ledger: %v", err)
-	}
-	defer resultsIterator.Close()
-
-	// Iterate through the results and delete each invoice
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-		if err != nil {
-			return err
-		}
-
-		var invoice Invoice
-		err = DeserializeFromJSON(queryResponse.Value, &invoice)
-		if err != nil {
-			return err
-		}
-
-		err = ctx.GetStub().DelState(invoice.InvoiceID)
-		if err != nil {
-			return fmt.Errorf("Failed to delete invoice %s: %v", invoice.InvoiceID, err)
-		}
-	}
-
-	return nil
-}
-
-// Calculate the ethics index of an item based on valid and invalid transactions
-func (s *SmartContract) CalculateEthicsIndex(ctx contractapi.TransactionContextInterface, itemID string, expiryDate string) (float64, error) {
-
-	// Fetch all invoices related to the itemID and expiryDate
-	queryString := fmt.Sprintf(`{"selector":{"items.item_id":"%s","items.expiry_date":"%s"}}`, itemID, expiryDate)
-	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
-	if err != nil {
-		return 0, fmt.Errorf("Failed to query ledger: %v", err)
-	}
-	defer resultsIterator.Close()
-
-	var totalValidTransactions, totalInvalidTransactions int
-
-	// Iterate through the results and count valid and invalid transactions
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-		if err != nil {
-			return 0, err
-		}
-
-		var invoice Invoice
-		err = DeserializeFromJSON(queryResponse.Value, &invoice)
-		if err != nil {
-			return 0, err
-		}
-
-		for _, item := range invoice.Items {
-			if item.ItemID == itemID && item.ExpiryDate == expiryDate {
-				transactionTime, err := time.Parse(time.RFC3339, invoice.Date)
+			if item.IsFoodItem {
+				wastageIndex, err := s.CalculateWastageInRollingWindow(ctx, item.ItemID, item.ExpiryDate)
 				if err != nil {
-					return 0, fmt.Errorf("Error parsing transaction date: %v", err)
+					return QualityIndex{}, err
 				}
-
-				expiryTime, err := time.Parse(time.RFC3339, expiryDate)
-				if err != nil {
-					return 0, fmt.Errorf("Error parsing expiry date: %v", err)
-				}
-
-				if transactionTime.After(expiryTime) {
-					totalInvalidTransactions++
-				} else {
-					totalValidTransactions++
-				}
+				totalWastageIndex += wastageIndex
+				totalItems++
 			}
+		}
+
+		// Calculate ethics index
+		if invoice.TotalAmount > 0 {
+			totalValid++
+		} else {
+			totalInvalid++
 		}
 	}
 
-	if totalInvalidTransactions == 0 {
-		return 100, nil
+	if totalItems == 0 {
+		return QualityIndex{}, fmt.Errorf("no items found for store %s", storeID)
 	}
 
-	ethicsIndex := BoundIndex(float64(totalValidTransactions) / float64(totalInvalidTransactions))
-	return ethicsIndex, nil
+	wastageIndex := totalWastageIndex / float64(totalItems)
+	ethicsIndex := float64(totalValid) / float64(totalValid+totalInvalid) * 100
+	qualityIndex := (1 / wastageIndex) + ethicsIndex
+
+	// Ensure indices are within range 0-100
+	if wastageIndex > 100 {
+		wastageIndex = 100
+	}
+	if ethicsIndex > 100 {
+		ethicsIndex = 100
+	}
+	if qualityIndex > 100 {
+		qualityIndex = 100
+	}
+
+	return QualityIndex{
+		StoreID:      storeID,
+		WastageIndex: wastageIndex,
+		EthicsIndex:  ethicsIndex,
+		QualityIndex: qualityIndex,
+	}, nil
 }
 
-// Driver code
 func main() {
-	chaincode, err := contractapi.NewChaincode(&SmartContract{})
+	chaincode, err := contractapi.NewChaincode(new(SmartContract))
 	if err != nil {
-		fmt.Printf("Error creating smart contract: %v\n", err)
-		return
+		fmt.Printf("Error creating smart contract: %v", err)
 	}
-
 	if err := chaincode.Start(); err != nil {
-		fmt.Printf("Error starting smart contract: %v\n", err)
+		fmt.Printf("Error starting smart contract: %v", err)
 	}
 }
