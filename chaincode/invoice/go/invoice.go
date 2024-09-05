@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -8,7 +10,11 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-// Structure of an invoice
+type SmartContract struct {
+	contractapi.Contract
+}
+
+// Invoice structure
 type Invoice struct {
 	InvoiceID       string  `json:"invoice_id"`
 	StoreID         string  `json:"store_id"`
@@ -18,9 +24,10 @@ type Invoice struct {
 	TransactionHash string  `json:"transaction_hash"`
 	Timestamp       string  `json:"timestamp"`
 	InvoiceType     string  `json:"invoice_type"` // 'purchase' or 'sales'
+	PrevBlockHash   string  `json:"prev_block_hash"`
 }
 
-// Structure of an item within an invoice
+// Item structure
 type Item struct {
 	ItemID       string  `json:"item_id"`
 	ItemName     string  `json:"item_name"`
@@ -28,360 +35,482 @@ type Item struct {
 	PricePerUnit float64 `json:"price_per_unit"`
 	TotalPrice   float64 `json:"total_price"`
 	ExpiryDate   string  `json:"expiry_date"`
-	IsFoodItem   bool    `json:"is_food_item"`
 	InvoiceType  string  `json:"invoice_type"` // 'purchase' or 'sales'
 }
 
-// Structure for storing quality index data
+// ItemKey structure
+type ItemKey struct {
+	ItemID     string `json:"item_id"`
+	ExpiryDate string `json:"expiry_date"`
+}
+
+// WastageIndex structure
+type WastageIndex struct {
+	ItemKey       ItemKey `json:"item_key"`
+	Wastage       float64 `json:"wastage"`
+	TotalPurchase float64 `json:"total_purchase"`
+	TotalSales    float64 `json:"total_sales"`
+}
+
+// QualityIndex structure
 type QualityIndex struct {
 	StoreID      string  `json:"store_id"`
-	WastageIndex float64 `json:"wastage_index"`
-	EthicsIndex  float64 `json:"ethics_index"`
+	ItemKey      ItemKey `json:"item_key"`
 	QualityIndex float64 `json:"quality_index"`
 }
 
-// SmartContract to manage invoices
-type SmartContract struct {
-	contractapi.Contract
+// StoreQuality structure
+type StoreQuality struct {
+	StoreID           string  `json:"store_id"`
+	TotalQualityIndex float64 `json:"total_quality_index"`
+	NumItemKeys       int     `json:"num_item_keys"`
 }
 
-// Serialize an object to JSON
-func SerializeToJSON(obj interface{}) ([]byte, error) {
-	return json.Marshal(obj)
+// TransactionValidity structure
+type TransactionValidity struct {
+	StoreID             string  `json:"store_id"`
+	ItemKey             ItemKey `json:"item_key"`
+	ValidTransactions   int     `json:"valid_transactions"`
+	InvalidTransactions int     `json:"invalid_transactions"`
 }
 
-// Deserialize JSON to an object
-func DeserializeFromJSON(jsonData []byte, obj interface{}) error {
-	return json.Unmarshal(jsonData, obj)
-}
+// CreateOrUpdateInvoice - Creates or updates an invoice and recalculates indices
+func (s *SmartContract) CreateOrUpdateInvoice(ctx contractapi.TransactionContextInterface, invoice Invoice) error {
+	// Generate the hash of the current block
+	currentBlockHash := generateBlockHash(invoice)
+	invoice.TransactionHash = currentBlockHash
 
-// Validate the invoice type
-func ValidateInvoiceType(invoiceType string) error {
-	if invoiceType != "purchase" && invoiceType != "sales" {
-		return fmt.Errorf("invalid invoice type: %s", invoiceType)
-	}
-	return nil
-}
-
-// Validate the item fields
-func ValidateItem(item Item) error {
-	if !item.IsFoodItem {
-		return fmt.Errorf("item %s is not a food item", item.ItemID)
-	}
-	if item.Quantity <= 0 {
-		return fmt.Errorf("invalid quantity for item %s", item.ItemID)
-	}
-	if item.PricePerUnit <= 0 {
-		return fmt.Errorf("invalid price per unit for item %s", item.ItemID)
-	}
-	return nil
-}
-
-// Validate date format
-func ValidateDateFormat(dateStr string, format string) (time.Time, error) {
-	date, err := time.Parse(format, dateStr)
+	// Retrieve the previous block hash for provenance
+	prevBlockHash, err := ctx.GetStub().GetState(invoice.InvoiceID)
 	if err != nil {
-		return time.Time{}, err
+		return fmt.Errorf("failed to retrieve previous block hash: %s", err.Error())
 	}
-	return date, nil
-}
+	if prevBlockHash != nil {
+		invoice.PrevBlockHash = string(prevBlockHash)
+	}
 
-// Create a provenance record for an invoice
-func CreateProvenanceRecord(invoiceJSON []byte, provenanceRecordID string, ctx contractapi.TransactionContextInterface) error {
-	return ctx.GetStub().PutState(provenanceRecordID, invoiceJSON)
-}
-
-// Creates a new invoice and stores it in the ledger
-func (s *SmartContract) CreateInvoice(ctx contractapi.TransactionContextInterface, invoiceID string, storeID string, date string, invoiceType string, items []Item, totalAmount float64) error {
-
-	// Validate the invoice type
-	if err := ValidateInvoiceType(invoiceType); err != nil {
+	// Validate transaction
+	err = s.ValidateTransaction(ctx, invoice)
+	if err != nil {
 		return err
 	}
 
-	// Validate each item in the invoice
-	for _, item := range items {
-		if err := ValidateItem(item); err != nil {
+	// Convert invoice to JSON and save to ledger
+	invoiceJSON, err := json.Marshal(invoice)
+	if err != nil {
+		return err
+	}
+
+	err = ctx.GetStub().PutState(invoice.InvoiceID, invoiceJSON)
+	if err != nil {
+		return err
+	}
+
+	// Calculate wastage, quality, and ethics index
+	wastageIndices, err := s.CalculateWastageIndex(ctx, invoice.StoreID, invoice.Items)
+	if err != nil {
+		return err
+	}
+
+	qualityIndex, err := s.CalculateQualityIndex(ctx, invoice.StoreID, wastageIndices)
+	if err != nil {
+		return err
+	}
+
+	ethicsIndex, err := s.CalculateEthicsIndex(ctx, invoice.StoreID, wastageIndices)
+	if err != nil {
+		return err
+	}
+
+	// Update ledger with new indices
+	for _, wastageIndex := range wastageIndices {
+		err = s.UpdateLedgerWithIndices(ctx, invoice.StoreID, qualityIndex, wastageIndex, ethicsIndex, TransactionValidity{})
+		if err != nil {
 			return err
 		}
-
-		// Parse the expiry date of the item
-		expiryDate, err := ValidateDateFormat(item.ExpiryDate, "2006-01-02")
-		if err != nil {
-			return fmt.Errorf("invalid expiry date format for item %s: %v", item.ItemID, err)
-		}
-
-		// Parse the transaction date
-		transactionDate, err := ValidateDateFormat(date, "2006-01-02")
-		if err != nil {
-			return fmt.Errorf("invalid transaction date format: %v", err)
-		}
-
-		// Check if the item is expired at the time of the transaction
-		if transactionDate.After(expiryDate) {
-			return fmt.Errorf("transaction cannot be recorded because item %s has expired", item.ItemID)
-		}
-
-		// Add invoice type to the item
-		item.InvoiceType = invoiceType
 	}
 
-	// Create the invoice object
-	invoice := Invoice{
-		InvoiceID:   invoiceID,
-		StoreID:     storeID,
-		Date:        date,
-		Items:       items,
-		TotalAmount: totalAmount,
-		Timestamp:   time.Now().String(),
-		InvoiceType: invoiceType,
-	}
-
-	// Serialize the invoice object to JSON
-	invoiceJSON, err := SerializeToJSON(invoice)
-	if err != nil {
-		return err
-	}
-
-	// Store the invoice in the ledger
-	return ctx.GetStub().PutState(invoice.InvoiceID, invoiceJSON)
+	return nil
 }
 
-// Updates an existing invoice
-func (s *SmartContract) UpdateInvoice(ctx contractapi.TransactionContextInterface, invoiceID string, updatedInvoice Invoice) error {
+// ValidateTransaction - Validates a transaction and flags it as invalid if necessary
+func (s *SmartContract) ValidateTransaction(ctx contractapi.TransactionContextInterface, invoice Invoice) error {
+	currentDate := time.Now().Format("2006-01-02")
 
-	// Retrieve the existing invoice
-	existingInvoiceJSON, err := ctx.GetStub().GetState(invoiceID)
-	if err != nil {
-		return fmt.Errorf("failed to read from world state: %v", err)
-	}
-	if existingInvoiceJSON == nil {
-		return fmt.Errorf("Invoice %s does not exist", invoiceID)
-	}
-
-	// Create a provenance record for the existing invoice
-	provenanceRecordID := fmt.Sprintf("%s_provenance_%s", invoiceID, time.Now().Format("20060102150405"))
-	if err := CreateProvenanceRecord(existingInvoiceJSON, provenanceRecordID, ctx); err != nil {
-		return err
-	}
-
-	// Serialize the updated invoice object to JSON
-	updatedInvoiceJSON, err := SerializeToJSON(updatedInvoice)
-	if err != nil {
-		return err
-	}
-
-	// Store the updated invoice in the ledger
-	return ctx.GetStub().PutState(invoiceID, updatedInvoiceJSON)
-}
-
-// Deletes an invoice from the ledger
-func (s *SmartContract) DeleteInvoice(ctx contractapi.TransactionContextInterface, invoiceID string) error {
-
-	// Retrieve the existing invoice
-	existingInvoiceJSON, err := ctx.GetStub().GetState(invoiceID)
-	if err != nil {
-		return fmt.Errorf("failed to read from world state: %v", err)
-	}
-	if existingInvoiceJSON == nil {
-		return fmt.Errorf("Invoice %s does not exist", invoiceID)
-	}
-
-	// Create a provenance record for the existing invoice
-	provenanceRecordID := fmt.Sprintf("%s_provenance_%s", invoiceID, time.Now().Format("20060102150405"))
-	if err := CreateProvenanceRecord(existingInvoiceJSON, provenanceRecordID, ctx); err != nil {
-		return err
-	}
-
-	// Delete the invoice from the ledger
-	return ctx.GetStub().DelState(invoiceID)
-}
-
-// Calculate wastage for an item within a rolling window
-func (s *SmartContract) CalculateWastageInRollingWindow(ctx contractapi.TransactionContextInterface, itemID string, expiryDate string) (float64, error) {
-
-	// Fetch all invoices associated with an itemID
-	queryString := fmt.Sprintf(`{"selector":{"items.item_id":"%s"}}`, itemID)
-	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
-	if err != nil {
-		return 0, fmt.Errorf("failed to query ledger: %v", err)
-	}
-	defer resultsIterator.Close()
-
-	var firstPurchaseDate time.Time
-	isFirstPurchaseFound := false
-
-	// Identify the first purchase date
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-		if err != nil {
-			return 0, err
+	for _, item := range invoice.Items {
+		// Check if the item has expired
+		if currentDate > item.ExpiryDate {
+			err := s.MarkTransactionInvalid(ctx, invoice.StoreID, ItemKey{ItemID: item.ItemID, ExpiryDate: item.ExpiryDate})
+			if err != nil {
+				return fmt.Errorf("transaction is invalid due to expired item: %s", err.Error())
+			}
 		}
+		// Check if total sales exceed total purchases
+		totalPurchases := s.GetTotalPurchases(ctx, invoice.StoreID, ItemKey{ItemID: item.ItemID, ExpiryDate: item.ExpiryDate})
+		totalSales := s.GetTotalSales(ctx, invoice.StoreID, ItemKey{ItemID: item.ItemID, ExpiryDate: item.ExpiryDate})
 
-		var invoice Invoice
-		err = DeserializeFromJSON(queryResponse.Value, &invoice)
-		if err != nil {
-			return 0, err
-		}
-
-		// Parse the invoice date
-		invoiceDateParsed, err := ValidateDateFormat(invoice.Date, "2006-01-02")
-		if err != nil {
-			return 0, fmt.Errorf("invalid invoice date format: %v", err)
-		}
-
-		// Check and set the first purchase date
-		if !isFirstPurchaseFound || invoiceDateParsed.Before(firstPurchaseDate) {
-			firstPurchaseDate = invoiceDateParsed
-			isFirstPurchaseFound = true
-		}
-	}
-
-	if !isFirstPurchaseFound {
-		return 0, fmt.Errorf("no purchase data found for item %s", itemID)
-	}
-
-	// Calculate wastage based on the first purchase date and expiry date
-	totalSales := 0.0
-	totalPurchases := 0.0
-
-	// Query for all sales and purchases in the window
-	queryString = fmt.Sprintf(`{"selector":{"items.item_id":"%s","date":{"$gte":"%s","$lte":"%s"}}}`, itemID, firstPurchaseDate.Format("2006-01-02"), expiryDate)
-	resultsIterator, err = ctx.GetStub().GetQueryResult(queryString)
-	if err != nil {
-		return 0, fmt.Errorf("failed to query ledger: %v", err)
-	}
-	defer resultsIterator.Close()
-
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-		if err != nil {
-			return 0, err
-		}
-
-		var invoice Invoice
-		err = DeserializeFromJSON(queryResponse.Value, &invoice)
-		if err != nil {
-			return 0, err
-		}
-
-		// Check if the transaction date exceeds the expiry date
-		transactionTime, err := time.Parse("2006-01-02", invoice.Date)
-		if err != nil {
-			return 0, fmt.Errorf("error parsing transaction date: %v", err)
-		}
-
-		expiryTime, err := time.Parse("2006-01-02", expiryDate)
-		if err != nil {
-			return 0, fmt.Errorf("error parsing expiry date: %v", err)
-		}
-
-		// Invalidate the transaction if the transaction date exceeds the expiry date
-		if transactionTime.After(expiryTime) {
-			return 0, fmt.Errorf("transaction cannot be recorded because item %s has expired", itemID)
-		}
-
-		for _, item := range invoice.Items {
-			if item.ItemID == itemID && item.ExpiryDate == expiryDate {
-				if invoice.InvoiceType == "sales" {
-					totalSales += item.Quantity
-				} else if invoice.InvoiceType == "purchase" {
-					totalPurchases += item.Quantity
-				}
+		if totalSales > totalPurchases {
+			err := s.MarkTransactionInvalid(ctx, invoice.StoreID, ItemKey{ItemID: item.ItemID, ExpiryDate: item.ExpiryDate})
+			if err != nil {
+				return fmt.Errorf("transaction is invalid due to sales exceeding purchases: %s", err.Error())
 			}
 		}
 	}
-
-	// Calculate the wastage index
-	if totalPurchases == 0 {
-		return 0, nil
-	}
-	wastageIndex := (totalSales / totalPurchases) * 100
-
-	return wastageIndex, nil
+	return nil
 }
 
-// Calculate the quality index for a store
-func (s *SmartContract) CalculateQualityIndex(ctx contractapi.TransactionContextInterface, storeID string) (QualityIndex, error) {
-
-	// Fetch all invoices associated with a storeID
-	queryString := fmt.Sprintf(`{"selector":{"store_id":"%s"}}`, storeID)
-	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
+// MarkTransactionInvalid - Marks a transaction as invalid and deletes it while maintaining provenance
+func (s *SmartContract) MarkTransactionInvalid(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) error {
+	// Retrieve the invoice to be invalidated
+	invoiceJSON, err := ctx.GetStub().GetState(itemKey.ItemID)
 	if err != nil {
-		return QualityIndex{}, fmt.Errorf("failed to query ledger: %v", err)
+		return err
 	}
-	defer resultsIterator.Close()
+	if invoiceJSON == nil {
+		return fmt.Errorf("Invoice not found for ItemID: %s", itemKey.ItemID)
+	}
 
-	totalWastageIndex := 0.0
-	totalItems := 0
-	totalValid := 0
-	totalInvalid := 0
+	var invoice Invoice
+	err = json.Unmarshal(invoiceJSON, &invoice)
+	if err != nil {
+		return err
+	}
 
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
+	// Update the transaction validity
+	err = s.UpdateTransactionValidity(ctx, storeID, itemKey, false)
+	if err != nil {
+		return err
+	}
+
+	// Log the invalid transaction (optional)
+	err = ctx.GetStub().PutState(fmt.Sprintf("INVALID_%s_%s_%s", storeID, itemKey.ItemID, itemKey.ExpiryDate), invoiceJSON)
+	if err != nil {
+		return err
+	}
+
+	// Delete the invoice while maintaining provenance
+	err = ctx.GetStub().DelState(itemKey.ItemID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// UpdateTransactionValidity - Updates the validity of a transaction
+func (s *SmartContract) UpdateTransactionValidity(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey, isValid bool) error {
+	// Retrieve current validity data
+	transactionValidityBytes, err := ctx.GetStub().GetState(fmt.Sprintf("TRANSACTION_VALIDITY_%s_%s_%s", storeID, itemKey.ItemID, itemKey.ExpiryDate))
+	if err != nil {
+		return err
+	}
+
+	var transactionValidity TransactionValidity
+	if transactionValidityBytes != nil {
+		err = json.Unmarshal(transactionValidityBytes, &transactionValidity)
 		if err != nil {
-			return QualityIndex{}, err
+			return err
+		}
+	} else {
+		transactionValidity = TransactionValidity{
+			StoreID: storeID,
+			ItemKey: itemKey,
+		}
+	}
+
+	// Update the count
+	if isValid {
+		transactionValidity.ValidTransactions++
+	} else {
+		transactionValidity.InvalidTransactions++
+	}
+
+	// Save updated validity data to ledger
+	transactionValidityBytes, err = json.Marshal(transactionValidity)
+	if err != nil {
+		return err
+	}
+
+	err = ctx.GetStub().PutState(fmt.Sprintf("TRANSACTION_VALIDITY_%s_%s_%s", storeID, itemKey.ItemID, itemKey.ExpiryDate), transactionValidityBytes)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// CalculateWastageIndex - Calculates wastage index for given items
+func (s *SmartContract) CalculateWastageIndex(ctx contractapi.TransactionContextInterface, storeID string, items []Item) ([]WastageIndex, error) {
+	var wastageIndices []WastageIndex
+
+	for _, item := range items {
+		itemKey := ItemKey{ItemID: item.ItemID, ExpiryDate: item.ExpiryDate}
+
+		// Fetch all purchase and sales transactions related to this itemKey (pseudo-code)
+		totalPurchases := s.GetTotalPurchases(ctx, storeID, itemKey)
+		totalSales := s.GetTotalSales(ctx, storeID, itemKey)
+
+		wastage := totalPurchases - totalSales
+
+		if totalSales > totalPurchases {
+			// Invalid transaction case
+			// Mark transactions as invalid, affect ethics index
+			s.MarkTransactionInvalid(ctx, storeID, itemKey)
 		}
 
-		var invoice Invoice
-		err = DeserializeFromJSON(queryResponse.Value, &invoice)
+		wastageIndex := WastageIndex{
+			ItemKey:       itemKey,
+			Wastage:       wastage / totalPurchases * 100,
+			TotalPurchase: totalPurchases,
+			TotalSales:    totalSales,
+		}
+
+		wastageIndices = append(wastageIndices, wastageIndex)
+	}
+
+	return wastageIndices, nil
+}
+
+// CalculateQualityIndex - Calculates quality index based on wastage index
+func (s *SmartContract) CalculateQualityIndex(ctx contractapi.TransactionContextInterface, storeID string, wastageIndices []WastageIndex) (float64, error) {
+	var totalWastageIndex float64
+	for _, wastageIndex := range wastageIndices {
+		totalWastageIndex += wastageIndex.Wastage
+	}
+
+	// Quality index = 1/wastage index
+	averageWastageIndex := totalWastageIndex / float64(len(wastageIndices))
+	qualityIndex := 1 / averageWastageIndex
+
+	return qualityIndex, nil
+}
+
+// CalculateEthicsIndex - Calculates ethics index for the store
+func (s *SmartContract) CalculateEthicsIndex(ctx contractapi.TransactionContextInterface, storeID string, wastageIndices []WastageIndex) (float64, error) {
+	var totalValidTransactions, totalInvalidTransactions int
+
+	for _, wastageIndex := range wastageIndices {
+		itemKey := wastageIndex.ItemKey
+		transactionValidity, err := s.GetTransactionValidity(ctx, storeID, itemKey)
 		if err != nil {
-			return QualityIndex{}, err
+			return 0, err
 		}
 
-		// Calculate wastage index for each item
-		for _, item := range invoice.Items {
-			if item.IsFoodItem {
-				wastageIndex, err := s.CalculateWastageInRollingWindow(ctx, item.ItemID, item.ExpiryDate)
-				if err != nil {
-					return QualityIndex{}, err
-				}
-				totalWastageIndex += wastageIndex
-				totalItems++
-			}
-		}
-
-		// Calculate ethics index
-		if invoice.TotalAmount > 0 {
-			totalValid++
-		} else {
-			totalInvalid++
-		}
+		totalValidTransactions += transactionValidity.ValidTransactions
+		totalInvalidTransactions += transactionValidity.InvalidTransactions
 	}
 
-	if totalItems == 0 {
-		return QualityIndex{}, fmt.Errorf("no items found for store %s", storeID)
-	}
+	// Ethics index = valid / (valid + invalid)
+	averageethicsIndex := float64(totalValidTransactions) / float64(totalValidTransactions+totalInvalidTransactions) * 100
 
-	wastageIndex := totalWastageIndex / float64(totalItems)
-	ethicsIndex := float64(totalValid) / float64(totalValid+totalInvalid) * 100
-	qualityIndex := (1 / wastageIndex) + ethicsIndex
+	return averageethicsIndex, nil
+}
 
-	// Ensure indices are within range 0-100
-	if wastageIndex > 100 {
-		wastageIndex = 100
-	}
-	if ethicsIndex > 100 {
-		ethicsIndex = 100
-	}
-	if qualityIndex > 100 {
-		qualityIndex = 100
-	}
-
-	return QualityIndex{
+// UpdateLedgerWithIndices - Updates the ledger with calculated indices
+func (s *SmartContract) UpdateLedgerWithIndices(ctx contractapi.TransactionContextInterface, storeID string, qualityIndex float64, wastageIndex WastageIndex, averageethicsIndex float64, transactionValidity TransactionValidity) error {
+	// Update quality index in ledger
+	qualityIndexKey := fmt.Sprintf("QUALTIY_INDEX_%s_%s_%s", storeID, wastageIndex.ItemKey.ItemID, wastageIndex.ItemKey.ExpiryDate)
+	qualityIndexData := QualityIndex{
 		StoreID:      storeID,
-		WastageIndex: wastageIndex,
-		EthicsIndex:  ethicsIndex,
-		QualityIndex: qualityIndex,
-	}, nil
+		QualityIndex: qualityIndex + averageethicsIndex,
+	}
+	qualityIndexJSON, err := json.Marshal(qualityIndexData)
+	if err != nil {
+		return err
+	}
+	err = ctx.GetStub().PutState(qualityIndexKey, qualityIndexJSON)
+	if err != nil {
+		return err
+	}
+
+	// Update wastage index in ledger
+	wastageIndexKey := fmt.Sprintf("WASTAGE_INDEX_%s_%s_%s", storeID, wastageIndex.ItemKey.ItemID, wastageIndex.ItemKey.ExpiryDate)
+	wastageIndexJSON, err := json.Marshal(wastageIndex)
+	if err != nil {
+		return err
+	}
+	err = ctx.GetStub().PutState(wastageIndexKey, wastageIndexJSON)
+	if err != nil {
+		return err
+	}
+
+	// Update transaction validity in ledger
+	transactionValidityKey := fmt.Sprintf("TRANSACTION_VALIDITY_%s_%s_%s", storeID, wastageIndex.ItemKey.ItemID, wastageIndex.ItemKey.ExpiryDate)
+	transactionValidityJSON, err := json.Marshal(transactionValidity)
+	if err != nil {
+		return err
+	}
+	err = ctx.GetStub().PutState(transactionValidityKey, transactionValidityJSON)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// DeleteInvoice - Deletes an invoice and maintains provenance
+func (s *SmartContract) DeleteInvoice(ctx contractapi.TransactionContextInterface, invoiceID string) error {
+	// Retrieve the invoice to be deleted
+	invoiceJSON, err := ctx.GetStub().GetState(invoiceID)
+	if err != nil {
+		return err
+	}
+	if invoiceJSON == nil {
+		return fmt.Errorf("Invoice not found for ID: %s", invoiceID)
+	}
+
+	var invoice Invoice
+	err = json.Unmarshal(invoiceJSON, &invoice)
+	if err != nil {
+		return err
+	}
+
+	// Delete the invoice from ledger
+	err = ctx.GetStub().DelState(invoiceID)
+	if err != nil {
+		return err
+	}
+
+	// Log the deletion for provenance
+	err = ctx.GetStub().PutState(fmt.Sprintf("DELETED_%s_%s", invoice.StoreID, invoiceID), invoiceJSON)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// UpdateInvoice - Updates an existing invoice and recalculates indices
+func (s *SmartContract) UpdateInvoice(ctx contractapi.TransactionContextInterface, invoice Invoice) error {
+	// Retrieve the current invoice to be updated
+	existingInvoiceJSON, err := ctx.GetStub().GetState(invoice.InvoiceID)
+	if err != nil {
+		return err
+	}
+	if existingInvoiceJSON == nil {
+		return fmt.Errorf("Invoice not found for ID: %s", invoice.InvoiceID)
+	}
+
+	var existingInvoice Invoice
+	err = json.Unmarshal(existingInvoiceJSON, &existingInvoice)
+	if err != nil {
+		return err
+	}
+
+	// Delete the existing invoice while maintaining provenance
+	err = s.DeleteInvoice(ctx, invoice.InvoiceID)
+	if err != nil {
+		return err
+	}
+
+	// Create or update the invoice with the new data
+	err = s.CreateOrUpdateInvoice(ctx, invoice)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetTotalPurchases - Retrieves total purchases for a specific itemkey
+func (s *SmartContract) GetTotalPurchases(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) float64 {
+	queryString := fmt.Sprintf(`{"selector":{"store_id":"%s","items":{"$elemMatch":{"item_id":"%s","expiry_date":"%s"}},"invoice_type":"purchase"}}`, storeID, itemKey.ItemID, itemKey.ExpiryDate)
+	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
+	if err != nil {
+		return -1
+	}
+	defer resultsIterator.Close()
+
+	var totalPurchases float64
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return -1
+		}
+
+		var invoice Invoice
+		err = json.Unmarshal(queryResponse.Value, &invoice)
+		if err != nil {
+			return -1
+		}
+
+		for _, item := range invoice.Items {
+			if item.ItemID == itemKey.ItemID && item.ExpiryDate == itemKey.ExpiryDate {
+				totalPurchases += item.Quantity
+			}
+		}
+	}
+
+	return totalPurchases
+}
+
+// GetTotalSales - Retrieves total sales for a specific itemkey
+func (s *SmartContract) GetTotalSales(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) float64 {
+	queryString := fmt.Sprintf(`{"selector":{"store_id":"%s","items":{"$elemMatch":{"item_id":"%s","expiry_date":"%s"}},"invoice_type":"sales"}}`, storeID, itemKey.ItemID, itemKey.ExpiryDate)
+	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
+	if err != nil {
+		return -1
+	}
+	defer resultsIterator.Close()
+
+	var totalSales float64
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return -1
+		}
+
+		var invoice Invoice
+		err = json.Unmarshal(queryResponse.Value, &invoice)
+		if err != nil {
+			return -1
+		}
+
+		for _, item := range invoice.Items {
+			if item.ItemID == itemKey.ItemID && item.ExpiryDate == itemKey.ExpiryDate {
+				totalSales += item.Quantity
+			}
+		}
+	}
+
+	return totalSales
+}
+
+// GetTransactionValidity - Retrieves transaction validity data from the ledger
+func (s *SmartContract) GetTransactionValidity(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) (TransactionValidity, error) {
+	transactionValidityBytes, err := ctx.GetStub().GetState(fmt.Sprintf("TRANSACTION_VALIDITY_%s_%s_%s", storeID, itemKey.ItemID, itemKey.ExpiryDate))
+	if err != nil {
+		return TransactionValidity{}, err
+	}
+	if transactionValidityBytes == nil {
+		return TransactionValidity{}, fmt.Errorf("transaction validity not found for ItemKey: %s", itemKey)
+	}
+
+	var transactionValidity TransactionValidity
+	err = json.Unmarshal(transactionValidityBytes, &transactionValidity)
+	if err != nil {
+		return TransactionValidity{}, err
+	}
+
+	return transactionValidity, nil
+}
+
+// generateBlockHash - Generates a SHA-256 hash for the block
+func generateBlockHash(invoice Invoice) string {
+	record := invoice.InvoiceID + invoice.StoreID + invoice.Date + invoice.Timestamp
+	hash := sha256.New()
+	hash.Write([]byte(record))
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func main() {
 	chaincode, err := contractapi.NewChaincode(new(SmartContract))
 	if err != nil {
-		fmt.Printf("Error creating smart contract: %v", err)
+		fmt.Printf("Error creating invoice chaincode: %s", err.Error())
+		return
 	}
+
 	if err := chaincode.Start(); err != nil {
-		fmt.Printf("Error starting smart contract: %v", err)
+		fmt.Printf("Error starting invoice chaincode: %s", err.Error())
 	}
 }

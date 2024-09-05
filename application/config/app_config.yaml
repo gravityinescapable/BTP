@@ -1,8 +1,10 @@
 server:
-  port: 8080
+  port: "8080"
+
 database:
-  host: localhost
-  port: 5432
-  user: user
-  password: password
-  dbname: mydb
+  host: "localhost"
+  port: "5432"
+  user: "dbuser"
+  password: "dbpassword"
+  name: "dbname"
+
