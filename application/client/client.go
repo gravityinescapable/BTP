@@ -25,7 +25,7 @@ func GetTotalPurchases(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]string{
 		"itemID":         itemID,
-		"totalPurchases": "100", // Placeholder value
+		"totalPurchases": "100",
 	}
 	json.NewEncoder(w).Encode(response)
 }

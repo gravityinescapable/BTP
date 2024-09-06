@@ -3,9 +3,8 @@ package config
 import (
 	"embed"
 	"fmt"
-	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/spf13/viper"
 )
 
 //go:embed app_config.yaml
@@ -30,15 +29,14 @@ var AppConfig Config
 
 // LoadConfig reads the configuration file and parses it
 func LoadConfig() error {
-	data, err := configFile.ReadFile("config.yaml")
-	if err != nil {
+	viper.SetConfigFile("application/config/config.yaml")
+
+	if err := viper.ReadInConfig(); err != nil {
 		return fmt.Errorf("error reading config file: %v", err)
 	}
 
-	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
-	err = decoder.Decode(&AppConfig)
-	if err != nil {
-		return fmt.Errorf("error decoding config file: %v", err)
+	if err := viper.Unmarshal(&AppConfig); err != nil {
+		return fmt.Errorf("error unmarshaling config: %v", err)
 	}
 
 	return nil
