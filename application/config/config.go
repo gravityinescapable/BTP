@@ -1,14 +1,10 @@
 package config
 
 import (
-	"embed"
 	"fmt"
 
 	"github.com/spf13/viper"
 )
-
-//go:embed app_config.yaml
-var configFile embed.FS
 
 // Config holds the application configuration
 type Config struct {

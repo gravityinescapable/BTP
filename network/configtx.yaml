@@ -1,69 +1,202 @@
+################################################################################
+#
+#   ORGANIZATIONS
+#
+################################################################################
 Organizations:
-
     - &OrdererOrg
         Name: OrdererOrg
         ID: OrdererMSP
         MSPDir: crypto-config/ordererOrganizations/example.com/msp
+        Policies:
+            Readers:
+                Type: ImplicitMeta
+                Rule: "ANY Readers"
+            Writers:
+                Type: ImplicitMeta
+                Rule: "MAJORITY Writers"
+            Admins:
+                Type: ImplicitMeta
+                Rule: "MAJORITY Admins"
+        OrdererEndpoints:
+            - orderer.example.com:7050
 
     - &Org1
         Name: Org1MSP
         ID: Org1MSP
         MSPDir: crypto-config/peerOrganizations/org1.example.com/msp
+        Policies:
+            Readers:
+                Type: ImplicitMeta
+                Rule: "ANY Readers"
+            Writers:
+                Type: ImplicitMeta
+                Rule: "ANY Writers"
+            Admins:
+                Type: ImplicitMeta
+                Rule: "MAJORITY Admins"
         AnchorPeers:
             - Host: peer0.org1.example.com
               Port: 7051
 
-    - &ClientOrg
-        Name: ClientOrgMSP
-        ID: ClientOrgMSP
-        MSPDir: crypto-config/peerOrganizations/client.example.com/msp
+    - &Org2
+        Name: Org2MSP
+        ID: Org2MSP
+        MSPDir: crypto-config/peerOrganizations/org2.example.com/msp
+        Policies:
+            Readers:
+                Type: ImplicitMeta
+                Rule: "ANY Readers"
+            Writers:
+                Type: ImplicitMeta
+                Rule: "ANY Writers"
+            Admins:
+                Type: ImplicitMeta
+                Rule: "MAJORITY Admins"
+        AnchorPeers:
+            - Host: peer0.org2.example.com
+              Port: 7051
 
+################################################################################
+#
+#   CAPABILITIES
+#
+################################################################################
 Capabilities:
     Channel: &ChannelCapabilities
         V2_0: true
-
     Orderer: &OrdererCapabilities
         V2_0: true
-
     Application: &ApplicationCapabilities
-        V2_0: true
+        V2_5: true
 
+################################################################################
+#
+#   APPLICATION
+#
+################################################################################
 Application: &ApplicationDefaults
-    Organizations:
-        # Define default policies for application channels
-        - *Org1
-        - *ClientOrg
+    ACLs: &ACLsDefault
+        _lifecycle/CheckCommitReadiness: /Channel/Application/Writers
+        _lifecycle/CommitChaincodeDefinition: /Channel/Application/Writers
+        _lifecycle/QueryChaincodeDefinition: /Channel/Application/Writers
+        _lifecycle/QueryChaincodeDefinitions: /Channel/Application/Writers
+        lscc/ChaincodeExists: /Channel/Application/Readers
+        lscc/GetDeploymentSpec: /Channel/Application/Readers
+        lscc/GetChaincodeData: /Channel/Application/Readers
+        lscc/GetInstantiatedChaincodes: /Channel/Application/Readers
+        qscc/GetChainInfo: /Channel/Application/Readers
+        qscc/GetBlockByNumber: /Channel/Application/Readers
+        qscc/GetBlockByHash: /Channel/Application/Readers
+        qscc/GetTransactionByID: /Channel/Application/Readers
+        qscc/GetBlockByTxID: /Channel/Application/Readers
+        cscc/GetConfigBlock: /Channel/Application/Readers
+        cscc/GetChannelConfig: /Channel/Application/Readers
+        peer/Propose: /Channel/Application/Writers
+        peer/ChaincodeToChaincode: /Channel/Application/Writers
+        event/Block: /Channel/Application/Readers
+        event/FilteredBlock: /Channel/Application/Readers
 
+    Organizations:
+        - *Org1
+        - *Org2
+
+    Policies: &ApplicationDefaultPolicies
+        LifecycleEndorsement:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Endorsement"
+        Endorsement:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Endorsement"
+        Readers:
+            Type: ImplicitMeta
+            Rule: "ANY Readers"
+        Writers:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+        Admins:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Admins"
+
+    Capabilities:
+        <<: *ApplicationCapabilities
+
+################################################################################
+#
+#   ORDERER
+#
+################################################################################
 Orderer: &OrdererDefaults
     OrdererType: solo
     Addresses:
         - orderer.example.com:7050
     BatchTimeout: 2s
     BatchSize:
-        MaxMessageCount: 10
-        AbsoluteMaxBytes: 99 MB
-        PreferredMaxBytes: 512 KB
+        MaxMessageCount: 500
+        AbsoluteMaxBytes: 10 MB
+        PreferredMaxBytes: 2 MB
+    MaxChannels: 0
+    Kafka:
+        Brokers:
+            - kafka0:9092
+            - kafka1:9092
+            - kafka2:9092
+    EtcdRaft:
+        Consenters:
+            - Host: raft0.example.com
+              Port: 7050
+              ClientTLSCert: crypto-config/peerOrganizations/client.example.com/tlsca/tlsca.client.example.com-cert.pem
+              ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+        Options:
+            TickInterval: 500ms
+            ElectionTick: 10
+            HeartbeatTick: 1
+            MaxInflightBlocks: 5
+            SnapshotIntervalSize: 16 MB
     Organizations:
         - *OrdererOrg
+    Policies:
+        Readers:
+            Type: ImplicitMeta
+            Rule: "ANY Readers"
+        Writers:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+        Admins:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Admins"
+        BlockValidation:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+    Capabilities:
+        <<: *OrdererCapabilities
 
-Policies:
-    Readers:
-        Type: ImplicitMeta
-        Rule: "ANY Readers"
-    Writers:
-        Type: ImplicitMeta
-        Rule: "MAJORITY Writers"  # Only majority of peers/orderers can write
-    Admins:
-        Type: ImplicitMeta
-        Rule: "MAJORITY Admins"
-    Endorsement:
-        Type: ImplicitMeta
-        Rule: "MAJORITY Endorsement"  # Peers handle endorsement
+################################################################################
+#
+#   CHANNEL
+#
+################################################################################
+Channel: &ChannelDefaults
+    Policies:
+        Readers:
+            Type: ImplicitMeta
+            Rule: "ANY Readers"
+        Writers:
+            Type: ImplicitMeta
+            Rule: "ANY Writers"
+        Admins:
+            Type: ImplicitMeta
+            Rule: "MAJORITY Admins"
+    Capabilities:
+        <<: *ChannelCapabilities
 
+################################################################################
+#
+#   PROFILES
+#
+################################################################################
 Profiles:
-
     TwoOrgsOrdererGenesis:
-        <<: *ChannelDefaults
         Orderer:
             <<: *OrdererDefaults
             Organizations:
@@ -72,47 +205,34 @@ Profiles:
             SampleConsortium:
                 Organizations:
                     - *Org1
+                    - *Org2
+        Policies:
+            Readers:
+                Type: ImplicitMeta
+                Rule: "ANY Readers"
+            Writers:
+                Type: ImplicitMeta
+                Rule: "ANY Writers"
+            Admins:
+                Type: ImplicitMeta
+                Rule: "MAJORITY Admins"
 
     TwoOrgsChannel:
         Consortium: SampleConsortium
         Application:
             <<: *ApplicationDefaults
             Organizations:
-                - *Org1  # Include only the peer organizations 
-            Capabilities:
-                <<: *ApplicationCapabilities
-            Policies:
-                Readers:
-                    Type: ImplicitMeta
-                    Rule: "ANY Readers"
-                Writers:
-                    Type: ImplicitMeta
-                    Rule: "MAJORITY Writers"  # Ensures that only majority of the peers can write
-                Admins:
-                    Type: ImplicitMeta
-                    Rule: "MAJORITY Admins"
-                Endorsement:
-                    Type: ImplicitMeta
-                    Rule: "MAJORITY Endorsement"  # Only allow endorsing peers to approve transactions
+                - *Org1
+                - *Org2
+        Policies:
+            Readers:
+                Type: ImplicitMeta
+                Rule: "ANY Readers"
+            Writers:
+                Type: ImplicitMeta
+                Rule: "ANY Writers"
+            Admins:
+                Type: ImplicitMeta
+                Rule: "MAJORITY Admins"
 
-    ClientChannel:
-        Consortium: SampleConsortium
-        Application:
-            <<: *ApplicationDefaults
-            Organizations:
-                - *ClientOrg  # Include client organizations here
-            Capabilities:
-                <<: *ApplicationCapabilities
-            Policies:
-                Readers:
-                    Type: ImplicitMeta
-                    Rule: "ANY Readers"
-                Writers:
-                    Type: ImplicitMeta
-                    Rule: "MAJORITY Writers"  # Ensures that only majority of the peers can write
-                Admins:
-                    Type: ImplicitMeta
-                    Rule: "MAJORITY Admins"
-                Endorsement:
-                    Type: ImplicitMeta
-                    Rule: "MAJORITY Endorsement"  # Only allow endorsing peers to approve transactions
+        
