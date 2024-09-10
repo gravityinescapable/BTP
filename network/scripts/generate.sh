@@ -16,3 +16,4 @@ configtxgen -profile TwoOrgsOrdererGenesis -configPath $(dirname ${CONFIG_PATH})
 
 # Generate the channel configuration transaction 
 configtxgen -profile TwoOrgsChannel -configPath $(dirname ${CONFIG_PATH}) -outputCreateChannelTx ${ARTIFACTS_PATH}/channel.tx -channelID myChannel
+
