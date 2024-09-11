@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
@@ -74,7 +75,7 @@ type TransactionValidity struct {
 	InvalidTransactions int     `json:"invalid_transactions"`
 }
 
-// CreateOrUpdateInvoice - Creates or updates an invoice and recalculates indices
+// Create or update an invoice and recalculate indices
 func (s *SmartContract) CreateOrUpdateInvoice(ctx contractapi.TransactionContextInterface, invoice Invoice) error {
 	// Generate the hash of the current block
 	currentBlockHash := generateBlockHash(invoice)
@@ -133,7 +134,7 @@ func (s *SmartContract) CreateOrUpdateInvoice(ctx contractapi.TransactionContext
 	return nil
 }
 
-// ValidateTransaction - Validates a transaction and flags it as invalid if necessary
+// Validate a transaction and flag it as invalid if necessary
 func (s *SmartContract) ValidateTransaction(ctx contractapi.TransactionContextInterface, invoice Invoice) error {
 	currentDate := time.Now().Format("2006-01-02")
 
@@ -159,7 +160,7 @@ func (s *SmartContract) ValidateTransaction(ctx contractapi.TransactionContextIn
 	return nil
 }
 
-// MarkTransactionInvalid - Marks a transaction as invalid and deletes it while maintaining provenance
+// Mark a transaction as invalid and delete it while maintaining provenance
 func (s *SmartContract) MarkTransactionInvalid(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) error {
 	// Retrieve the invoice to be invalidated
 	invoiceJSON, err := ctx.GetStub().GetState(itemKey.ItemID)
@@ -182,7 +183,7 @@ func (s *SmartContract) MarkTransactionInvalid(ctx contractapi.TransactionContex
 		return err
 	}
 
-	// Log the invalid transaction (optional)
+	// Log the invalid transaction
 	err = ctx.GetStub().PutState(fmt.Sprintf("INVALID_%s_%s_%s", storeID, itemKey.ItemID, itemKey.ExpiryDate), invoiceJSON)
 	if err != nil {
 		return err
@@ -197,7 +198,7 @@ func (s *SmartContract) MarkTransactionInvalid(ctx contractapi.TransactionContex
 	return nil
 }
 
-// UpdateTransactionValidity - Updates the validity of a transaction
+// Update the validity of a transaction
 func (s *SmartContract) UpdateTransactionValidity(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey, isValid bool) error {
 	// Retrieve current validity data
 	transactionValidityBytes, err := ctx.GetStub().GetState(fmt.Sprintf("TRANSACTION_VALIDITY_%s_%s_%s", storeID, itemKey.ItemID, itemKey.ExpiryDate))
@@ -225,7 +226,7 @@ func (s *SmartContract) UpdateTransactionValidity(ctx contractapi.TransactionCon
 		transactionValidity.InvalidTransactions++
 	}
 
-	// Save updated validity data to ledger
+	// Save updated validity data on the ledger
 	transactionValidityBytes, err = json.Marshal(transactionValidity)
 	if err != nil {
 		return err
@@ -239,22 +240,21 @@ func (s *SmartContract) UpdateTransactionValidity(ctx contractapi.TransactionCon
 	return nil
 }
 
-// CalculateWastageIndex - Calculates wastage index for given items
+// Calculate wastage index for given items
 func (s *SmartContract) CalculateWastageIndex(ctx contractapi.TransactionContextInterface, storeID string, items []Item) ([]WastageIndex, error) {
 	var wastageIndices []WastageIndex
 
 	for _, item := range items {
 		itemKey := ItemKey{ItemID: item.ItemID, ExpiryDate: item.ExpiryDate}
 
-		// Fetch all purchase and sales transactions related to this itemKey (pseudo-code)
+		// Fetch all purchase and sales transactions related to this itemKey
 		totalPurchases := s.GetTotalPurchases(ctx, storeID, itemKey)
 		totalSales := s.GetTotalSales(ctx, storeID, itemKey)
 
 		wastage := totalPurchases - totalSales
 
 		if totalSales > totalPurchases {
-			// Invalid transaction case
-			// Mark transactions as invalid, affect ethics index
+			// Mark transactions as invalid
 			s.MarkTransactionInvalid(ctx, storeID, itemKey)
 		}
 
@@ -271,7 +271,7 @@ func (s *SmartContract) CalculateWastageIndex(ctx contractapi.TransactionContext
 	return wastageIndices, nil
 }
 
-// CalculateQualityIndex - Calculates quality index based on wastage index
+// Calculate quality index based on wastage index
 func (s *SmartContract) CalculateQualityIndex(ctx contractapi.TransactionContextInterface, storeID string, wastageIndices []WastageIndex) (float64, error) {
 	var totalWastageIndex float64
 	for _, wastageIndex := range wastageIndices {
@@ -285,7 +285,7 @@ func (s *SmartContract) CalculateQualityIndex(ctx contractapi.TransactionContext
 	return qualityIndex, nil
 }
 
-// CalculateEthicsIndex - Calculates ethics index for the store
+// Calculate ethics index for the store
 func (s *SmartContract) CalculateEthicsIndex(ctx contractapi.TransactionContextInterface, storeID string, wastageIndices []WastageIndex) (float64, error) {
 	var totalValidTransactions, totalInvalidTransactions int
 
@@ -306,7 +306,7 @@ func (s *SmartContract) CalculateEthicsIndex(ctx contractapi.TransactionContextI
 	return averageethicsIndex, nil
 }
 
-// UpdateLedgerWithIndices - Updates the ledger with calculated indices
+// Updates the ledger with calculated indices
 func (s *SmartContract) UpdateLedgerWithIndices(ctx contractapi.TransactionContextInterface, storeID string, qualityIndex float64, wastageIndex WastageIndex, averageethicsIndex float64, transactionValidity TransactionValidity) error {
 	// Update quality index in ledger
 	qualityIndexKey := fmt.Sprintf("QUALTIY_INDEX_%s_%s_%s", storeID, wastageIndex.ItemKey.ItemID, wastageIndex.ItemKey.ExpiryDate)
@@ -348,7 +348,7 @@ func (s *SmartContract) UpdateLedgerWithIndices(ctx contractapi.TransactionConte
 	return nil
 }
 
-// DeleteInvoice - Deletes an invoice and maintains provenance
+// Delete an invoice and maintain provenance
 func (s *SmartContract) DeleteInvoice(ctx contractapi.TransactionContextInterface, invoiceID string) error {
 	// Retrieve the invoice to be deleted
 	invoiceJSON, err := ctx.GetStub().GetState(invoiceID)
@@ -380,7 +380,7 @@ func (s *SmartContract) DeleteInvoice(ctx contractapi.TransactionContextInterfac
 	return nil
 }
 
-// UpdateInvoice - Updates an existing invoice and recalculates indices
+// Update an existing invoice and recalculate indices
 func (s *SmartContract) UpdateInvoice(ctx contractapi.TransactionContextInterface, invoice Invoice) error {
 	// Retrieve the current invoice to be updated
 	existingInvoiceJSON, err := ctx.GetStub().GetState(invoice.InvoiceID)
@@ -412,7 +412,7 @@ func (s *SmartContract) UpdateInvoice(ctx contractapi.TransactionContextInterfac
 	return nil
 }
 
-// GetTotalPurchases - Retrieves total purchases for a specific itemkey
+// Retrieve total purchases for a specific itemkey
 func (s *SmartContract) GetTotalPurchases(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) float64 {
 	queryString := fmt.Sprintf(`{"selector":{"store_id":"%s","items":{"$elemMatch":{"item_id":"%s","expiry_date":"%s"}},"invoice_type":"purchase"}}`, storeID, itemKey.ItemID, itemKey.ExpiryDate)
 	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
@@ -444,7 +444,7 @@ func (s *SmartContract) GetTotalPurchases(ctx contractapi.TransactionContextInte
 	return totalPurchases
 }
 
-// GetTotalSales - Retrieves total sales for a specific itemkey
+// Retrieve total sales for a specific itemkey
 func (s *SmartContract) GetTotalSales(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) float64 {
 	queryString := fmt.Sprintf(`{"selector":{"store_id":"%s","items":{"$elemMatch":{"item_id":"%s","expiry_date":"%s"}},"invoice_type":"sales"}}`, storeID, itemKey.ItemID, itemKey.ExpiryDate)
 	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
@@ -476,7 +476,7 @@ func (s *SmartContract) GetTotalSales(ctx contractapi.TransactionContextInterfac
 	return totalSales
 }
 
-// GetTransactionValidity - Retrieves transaction validity data from the ledger
+// Retrieve transaction validity data from the ledger
 func (s *SmartContract) GetTransactionValidity(ctx contractapi.TransactionContextInterface, storeID string, itemKey ItemKey) (TransactionValidity, error) {
 	transactionValidityBytes, err := ctx.GetStub().GetState(fmt.Sprintf("TRANSACTION_VALIDITY_%s_%s_%s", storeID, itemKey.ItemID, itemKey.ExpiryDate))
 	if err != nil {
@@ -495,12 +495,126 @@ func (s *SmartContract) GetTransactionValidity(ctx contractapi.TransactionContex
 	return transactionValidity, nil
 }
 
-// generateBlockHash - Generates a SHA-256 hash for the block
+// Generate a SHA-256 hash for the block
 func generateBlockHash(invoice Invoice) string {
 	record := invoice.InvoiceID + invoice.StoreID + invoice.Date + invoice.Timestamp
 	hash := sha256.New()
 	hash.Write([]byte(record))
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// Calculate rewards or corrective measures based on quality index
+func (s *SmartContract) RewardAndCorrectiveSystem(ctx contractapi.TransactionContextInterface, storeID string, qualityIndex float64) (float64, error) {
+	var Cs, Rs float64
+
+	// Retrieve the corrective coefficient and reward coefficient
+	Cs, err := s.CalculateCorrectiveCoefficient(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to calculate corrective coefficient: %s", err.Error())
+	}
+
+	Rs, err = s.CalculateRewardCoefficient(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to calculate reward coefficient: %s", err.Error())
+	}
+
+	var result float64
+
+	// Calculate corrective measure or reward based on quality index
+	if qualityIndex < 50 {
+		result = -Cs * (50 - qualityIndex) // Corrective measure
+	} else if qualityIndex >= 80 {
+		result = Rs * (qualityIndex - 50) // Reward
+	} else {
+		result = 0 // Neutral zone
+	}
+
+	return result, nil
+}
+
+// Calculate the corrective coefficient based on quality index values
+func (s *SmartContract) CalculateCorrectiveCoefficient(ctx contractapi.TransactionContextInterface) (float64, error) {
+	query := `{"selector": {"quality_index": {"$lte": 50}}}`
+	resultsIterator, err := ctx.GetStub().GetQueryResult(query)
+	if err != nil {
+		return 0, err
+	}
+	defer resultsIterator.Close()
+
+	var minQualityIndex, maxQualityIndex float64
+	minQualityIndex = math.MaxFloat64
+	maxQualityIndex = -math.MaxFloat64
+
+	for resultsIterator.HasNext() {
+		response, err := resultsIterator.Next()
+		if err != nil {
+			return 0, err
+		}
+
+		var record struct {
+			QualityIndex float64 `json:"quality_index"`
+		}
+		err = json.Unmarshal(response.Value, &record)
+		if err != nil {
+			return 0, err
+		}
+
+		if record.QualityIndex < minQualityIndex {
+			minQualityIndex = record.QualityIndex
+		}
+		if record.QualityIndex > maxQualityIndex {
+			maxQualityIndex = record.QualityIndex
+		}
+	}
+
+	if minQualityIndex == 0 {
+		return maxQualityIndex, nil
+	}
+
+	return maxQualityIndex / minQualityIndex, nil
+}
+
+// Calculate the reward coefficient based on quality index values
+func (s *SmartContract) CalculateRewardCoefficient(ctx contractapi.TransactionContextInterface) (float64, error) {
+	query := `{"selector": {"quality_index": {"$gte": 80}}}`
+	resultsIterator, err := ctx.GetStub().GetQueryResult(query)
+	if err != nil {
+		return 0, err
+	}
+	defer resultsIterator.Close()
+
+	var minQualityIndex, maxQualityIndex float64
+	minQualityIndex = math.MaxFloat64
+	maxQualityIndex = -math.MaxFloat64
+
+	for resultsIterator.HasNext() {
+		response, err := resultsIterator.Next()
+		if err != nil {
+			return 0, err
+		}
+
+		var record struct {
+			QualityIndex float64 `json:"quality_index"`
+		}
+		err = json.Unmarshal(response.Value, &record)
+		if err != nil {
+			return 0, err
+		}
+
+		if record.QualityIndex < minQualityIndex {
+			minQualityIndex = record.QualityIndex
+		}
+		if record.QualityIndex > maxQualityIndex {
+			maxQualityIndex = record.QualityIndex
+		}
+	}
+
+	if minQualityIndex == math.MaxFloat64 {
+		// No data in this range
+		return 0, nil
+	}
+
+	return maxQualityIndex / minQualityIndex, nil
 }
 
 func main() {
