@@ -18,7 +18,7 @@ rfid.on('data', (data) => {
         timestamp: new Date().toISOString()  
     };
 
-    // Send data to middleware system
+    // Send data to the middleware system
     axios.post('http://middleware-system-url/api/storeItem', itemData)
         .then(response => {
             console.log('Item recorded on blockchain: ', response.data);
