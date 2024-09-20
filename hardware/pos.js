@@ -17,7 +17,6 @@ async function handlePOSData(data) {
         };
     });
 
-    // Create POS data with formatted items
     const posData = {
         transactionID: data.transactionID,
         items: formattedItems, 
