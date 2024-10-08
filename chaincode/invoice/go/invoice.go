@@ -53,18 +53,18 @@ type WastageIndex struct {
 	TotalSales    float64 `json:"total_sales"`
 }
 
-// QualityIndex structure
-type QualityIndex struct {
-	StoreID      string  `json:"store_id"`
-	ItemKey      ItemKey `json:"item_key"`
-	QualityIndex float64 `json:"quality_index"`
+// RISEIndex structure
+type RISEIndex struct {
+	StoreID   string  `json:"store_id"`
+	ItemKey   ItemKey `json:"item_key"`
+	RISEIndex float64 `json:"rise_index"`
 }
 
-// StoreQuality structure
-type StoreQuality struct {
-	StoreID           string  `json:"store_id"`
-	TotalQualityIndex float64 `json:"total_quality_index"`
-	NumItemKeys       int     `json:"num_item_keys"`
+// StoreRISE structure
+type StoreRISE struct {
+	StoreID        string  `json:"store_id"`
+	TotalRISEIndex float64 `json:"total_rise_index"`
+	NumItemKeys    int     `json:"num_item_keys"`
 }
 
 // TransactionValidity structure
@@ -107,13 +107,13 @@ func (s *SmartContract) CreateOrUpdateInvoice(ctx contractapi.TransactionContext
 		return err
 	}
 
-	// Calculate wastage, quality, and ethics index
+	// Calculate wastage, RISE, and ethics index
 	wastageIndices, err := s.CalculateWastageIndex(ctx, invoice.StoreID, invoice.Items)
 	if err != nil {
 		return err
 	}
 
-	qualityIndex, err := s.CalculateQualityIndex(ctx, invoice.StoreID, wastageIndices)
+	riseIndex, err := s.CalculateRISEIndex(ctx, invoice.StoreID, wastageIndices)
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (s *SmartContract) CreateOrUpdateInvoice(ctx contractapi.TransactionContext
 
 	// Update ledger with new indices
 	for _, wastageIndex := range wastageIndices {
-		err = s.UpdateLedgerWithIndices(ctx, invoice.StoreID, qualityIndex, wastageIndex, ethicsIndex, TransactionValidity{})
+		err = s.UpdateLedgerWithIndices(ctx, invoice.StoreID, riseIndex, wastageIndex, ethicsIndex, TransactionValidity{})
 		if err != nil {
 			return err
 		}
@@ -271,18 +271,17 @@ func (s *SmartContract) CalculateWastageIndex(ctx contractapi.TransactionContext
 	return wastageIndices, nil
 }
 
-// Calculate quality index based on wastage index
-func (s *SmartContract) CalculateQualityIndex(ctx contractapi.TransactionContextInterface, storeID string, wastageIndices []WastageIndex) (float64, error) {
+// Calculate RISE index based on wastage index
+func (s *SmartContract) CalculateRISEIndex(ctx contractapi.TransactionContextInterface, storeID string, wastageIndices []WastageIndex) (float64, error) {
 	var totalWastageIndex float64
 	for _, wastageIndex := range wastageIndices {
 		totalWastageIndex += wastageIndex.Wastage
 	}
 
-	// Quality index = 1/wastage index
 	averageWastageIndex := totalWastageIndex / float64(len(wastageIndices))
-	qualityIndex := 1 / averageWastageIndex
+	riseIndex := averageWastageIndex
 
-	return qualityIndex, nil
+	return riseIndex, nil
 }
 
 // Calculate ethics index for the store
@@ -307,18 +306,18 @@ func (s *SmartContract) CalculateEthicsIndex(ctx contractapi.TransactionContextI
 }
 
 // Updates the ledger with calculated indices
-func (s *SmartContract) UpdateLedgerWithIndices(ctx contractapi.TransactionContextInterface, storeID string, qualityIndex float64, wastageIndex WastageIndex, averageethicsIndex float64, transactionValidity TransactionValidity) error {
-	// Update quality index in ledger
-	qualityIndexKey := fmt.Sprintf("QUALTIY_INDEX_%s_%s_%s", storeID, wastageIndex.ItemKey.ItemID, wastageIndex.ItemKey.ExpiryDate)
-	qualityIndexData := QualityIndex{
-		StoreID:      storeID,
-		QualityIndex: qualityIndex + averageethicsIndex,
+func (s *SmartContract) UpdateLedgerWithIndices(ctx contractapi.TransactionContextInterface, storeID string, riseIndex float64, wastageIndex WastageIndex, averageethicsIndex float64, transactionValidity TransactionValidity) error {
+	// Update RISE index in ledger
+	riseIndexKey := fmt.Sprintf("RISE_INDEX_%s_%s_%s", storeID, wastageIndex.ItemKey.ItemID, wastageIndex.ItemKey.ExpiryDate)
+	riseIndexData := RISEIndex{
+		StoreID:   storeID,
+		RISEIndex: riseIndex - averageethicsIndex,
 	}
-	qualityIndexJSON, err := json.Marshal(qualityIndexData)
+	riseIndexJSON, err := json.Marshal(riseIndexData)
 	if err != nil {
 		return err
 	}
-	err = ctx.GetStub().PutState(qualityIndexKey, qualityIndexJSON)
+	err = ctx.GetStub().PutState(riseIndexKey, riseIndexJSON)
 	if err != nil {
 		return err
 	}
@@ -503,8 +502,8 @@ func generateBlockHash(invoice Invoice) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-// Calculate rewards or corrective measures based on quality index
-func (s *SmartContract) RewardAndCorrectiveSystem(ctx contractapi.TransactionContextInterface, storeID string, qualityIndex float64) (float64, error) {
+// Calculate rewards or corrective measures based on RISE index
+func (s *SmartContract) RewardAndCorrectiveSystem(ctx contractapi.TransactionContextInterface, storeID string, riseIndex float64) (float64, error) {
 	var Cs, Rs float64
 
 	// Retrieve the corrective coefficient and reward coefficient
@@ -520,11 +519,11 @@ func (s *SmartContract) RewardAndCorrectiveSystem(ctx contractapi.TransactionCon
 
 	var result float64
 
-	// Calculate corrective measure or reward based on quality index
-	if qualityIndex < 50 {
-		result = -Cs * (50 - qualityIndex) // Corrective measure
-	} else if qualityIndex >= 80 {
-		result = Rs * (qualityIndex - 50) // Reward
+	// Calculate corrective measure or reward based on RISE index
+	if riseIndex < 50 {
+		result = -Cs * (50 - riseIndex) // Corrective measure
+	} else if riseIndex >= 80 {
+		result = Rs * (riseIndex - 50) // Reward
 	} else {
 		result = 0 // Neutral zone
 	}
@@ -532,18 +531,18 @@ func (s *SmartContract) RewardAndCorrectiveSystem(ctx contractapi.TransactionCon
 	return result, nil
 }
 
-// Calculate the corrective coefficient based on quality index values
+// Calculate the corrective coefficient based on RISE index values
 func (s *SmartContract) CalculateCorrectiveCoefficient(ctx contractapi.TransactionContextInterface) (float64, error) {
-	query := `{"selector": {"quality_index": {"$lte": 50}}}`
+	query := `{"selector": {"RISE_index": {"$lte": 50}}}`
 	resultsIterator, err := ctx.GetStub().GetQueryResult(query)
 	if err != nil {
 		return 0, err
 	}
 	defer resultsIterator.Close()
 
-	var minQualityIndex, maxQualityIndex float64
-	minQualityIndex = math.MaxFloat64
-	maxQualityIndex = -math.MaxFloat64
+	var minRISEIndex, maxRISEIndex float64
+	minRISEIndex = math.MaxFloat64
+	maxRISEIndex = -math.MaxFloat64
 
 	for resultsIterator.HasNext() {
 		response, err := resultsIterator.Next()
@@ -552,40 +551,40 @@ func (s *SmartContract) CalculateCorrectiveCoefficient(ctx contractapi.Transacti
 		}
 
 		var record struct {
-			QualityIndex float64 `json:"quality_index"`
+			RISEIndex float64 `json:"rise_index"`
 		}
 		err = json.Unmarshal(response.Value, &record)
 		if err != nil {
 			return 0, err
 		}
 
-		if record.QualityIndex < minQualityIndex {
-			minQualityIndex = record.QualityIndex
+		if record.RISEIndex < minRISEIndex {
+			minRISEIndex = record.RISEIndex
 		}
-		if record.QualityIndex > maxQualityIndex {
-			maxQualityIndex = record.QualityIndex
+		if record.RISEIndex > maxRISEIndex {
+			maxRISEIndex = record.RISEIndex
 		}
 	}
 
-	if minQualityIndex == 0 {
-		return maxQualityIndex, nil
+	if minRISEIndex == 0 {
+		return maxRISEIndex, nil
 	}
 
-	return maxQualityIndex / minQualityIndex, nil
+	return maxRISEIndex / minRISEIndex, nil
 }
 
-// Calculate the reward coefficient based on quality index values
+// Calculate the reward coefficient based on RISE index values
 func (s *SmartContract) CalculateRewardCoefficient(ctx contractapi.TransactionContextInterface) (float64, error) {
-	query := `{"selector": {"quality_index": {"$gte": 80}}}`
+	query := `{"selector": {"rise_index": {"$gte": 80}}}`
 	resultsIterator, err := ctx.GetStub().GetQueryResult(query)
 	if err != nil {
 		return 0, err
 	}
 	defer resultsIterator.Close()
 
-	var minQualityIndex, maxQualityIndex float64
-	minQualityIndex = math.MaxFloat64
-	maxQualityIndex = -math.MaxFloat64
+	var minRISEIndex, maxRISEIndex float64
+	minRISEIndex = math.MaxFloat64
+	maxRISEIndex = -math.MaxFloat64
 
 	for resultsIterator.HasNext() {
 		response, err := resultsIterator.Next()
@@ -594,27 +593,27 @@ func (s *SmartContract) CalculateRewardCoefficient(ctx contractapi.TransactionCo
 		}
 
 		var record struct {
-			QualityIndex float64 `json:"quality_index"`
+			RISEIndex float64 `json:"rise_index"`
 		}
 		err = json.Unmarshal(response.Value, &record)
 		if err != nil {
 			return 0, err
 		}
 
-		if record.QualityIndex < minQualityIndex {
-			minQualityIndex = record.QualityIndex
+		if record.RISEIndex < minRISEIndex {
+			minRISEIndex = record.RISEIndex
 		}
-		if record.QualityIndex > maxQualityIndex {
-			maxQualityIndex = record.QualityIndex
+		if record.RISEIndex > maxRISEIndex {
+			maxRISEIndex = record.RISEIndex
 		}
 	}
 
-	if minQualityIndex == math.MaxFloat64 {
+	if minRISEIndex == math.MaxFloat64 {
 		// No data in this range
 		return 0, nil
 	}
 
-	return maxQualityIndex / minQualityIndex, nil
+	return maxRISEIndex / minRISEIndex, nil
 }
 
 func main() {

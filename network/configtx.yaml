@@ -55,7 +55,7 @@ Organizations:
                 Rule: "MAJORITY Admins"
         AnchorPeers:
             - Host: peer0.org2.example.com
-              Port: 7051
+              Port: 8051
 
 ################################################################################
 #
@@ -66,7 +66,7 @@ Capabilities:
     Channel: &ChannelCapabilities
         V2_0: true
     Orderer: &OrdererCapabilities
-        V2_0: true
+        V1_4_2: true
     Application: &ApplicationCapabilities
         V2_5: true
 
@@ -145,8 +145,8 @@ Orderer: &OrdererDefaults
         Consenters:
             - Host: raft0.example.com
               Port: 7050
-              ClientTLSCert: crypto-config/peerOrganizations/client.example.com/tlsca/tlsca.client.example.com-cert.pem
-              ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+              ClientTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer0.example.com/tls/server.crt
+              ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer0.example.com/tls/server.crt
         Options:
             TickInterval: 500ms
             ElectionTick: 10

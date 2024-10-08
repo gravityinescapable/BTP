@@ -1,0 +1,82 @@
+logging:
+  level: info
+  fields:
+    field: value
+    # Enable logging to a file
+    output: file
+    file:
+      path: /var/hyperledger/logs/peer.log
+      maxsize: 10MB
+      maxage: 30
+      maxbackups: 5
+      compress: true
+
+peer:
+  address: peer0.org1.example.com:7051
+  listenAddress: 0.0.0.0:7051
+  chaincodeAddress: peer0.org1.example.com:7052
+  chaincodeListenAddress: 0.0.0.0:7052
+  localMSPID: Org1MSP
+  mspConfigPath: crypto-config/peerOrganizations/org1.example.com/msp
+  dataPath: /var/hyperledger/production
+  ledger:
+    state:
+      stateDatabase: goleveldb
+      couchDBConfig:
+        CouchDBAddress: couchdb:5984
+        Username: ""
+        Password: ""
+# BCCSP configuration
+  bccsp:
+    default: SW
+    sw:
+      Hash: SHA2
+      Security: 256
+
+
+# Endorsement policies and other settings can be added here
+chaincode:
+  # Define the default endorsement policy
+  endorsement:
+    policy: "AND('Org1MSP.member', 'Org2MSP.member')"
+
+  # For external chaincode execution
+  externalBuilders:
+    enabled: true
+    path: /opt/gopath/bin
+
+  # Enable caching for chaincode
+  cache:
+    enabled: true
+    expiration: 30s
+
+orderer:
+  addresses:
+    - orderer.example.com:7050
+
+# Discovery settings
+discovery:
+  enabled: true
+  asLocalhost: false
+  # The enabled key has been removed as it was duplicated
+
+# Metrics configuration
+metrics:
+  provider: statsd
+  statsd:
+    network: udp
+    address: statsd:8125
+    writeInterval: 5s
+
+# TLS configuration
+tls:
+  enabled: true
+  ca:
+    # The path to the TLS CA certificate
+    file: crypto-config/peerOrganizations/org1.example.com/users/Admin@org1.example.com/tls/ca.crt
+  client:
+    cert:
+      file: crypto-config/peerOrganizations/org1.example.com/users/Admin@org1.example.com/tls/client.crt
+    key:
+      file: crypto-config/peerOrganizations/org1.example.com/users/Admin@org1.example.com/tls/client.key
+
